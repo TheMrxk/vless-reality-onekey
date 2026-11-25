@@ -1,0 +1,13 @@
+# 凭据与本地配置绝不入库
+cred.env
+*.conf
+my.conf
+node-link.txt
+mihomo-node.yaml
+
+# 生成物
+*.png
+__pycache__/
+*.pyc
+*.tar.gz
+test-qrcode.png

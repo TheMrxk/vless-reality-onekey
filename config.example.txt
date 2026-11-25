@@ -1,0 +1,16 @@
+# vps-onekey 配置文件模板
+# 用法：cp config.example.txt my.conf，按需修改，然后 ./install.sh --config my.conf
+# 留空或删除某行即采用脚本内置默认值。
+
+# 监听的 TCP 端口（1-65535）。默认 543，可规避部分软路由对 443 的 SNI 劫持
+PORT=543
+
+# 伪装域名（ServerName），必须是支持 TLS1.3 + HTTP/2 的真实大站
+# 常用候选：www.apple.com / www.microsoft.com / dl.google.com
+SNI=www.apple.com
+
+# 客户端里显示的节点名称（建议用英文/数字，避免特殊字符影响 URL 解析）
+NODE_NAME=Reality-Node
+
+# 设为 1 则强制重新生成密钥与 UUID（已导入旧配置的客户端会失效）
+FORCE_REGEN=0
