@@ -126,21 +126,54 @@ mkdir -p "${WORKDIR}"
 # ----------------------------- 1. BBR ---------------------------------------
 step "开启 BBR + fq（持久化）"
 modprobe tcp_bbr 2>/dev/null || true
+# 极简系统可能没有 /etc/sysctl.d 目录，先确保存在，避免重定向失败
+mkdir -p /etc/sysctl.d
 cat > /etc/sysctl.d/99-bbr.conf <<'SYSCTL'
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 SYSCTL
-sysctl -p /etc/sysctl.d/99-bbr.conf >/dev/null
-[ "$(sysctl -n net.ipv4.tcp_congestion_control)" = "bbr" ] \
-  && c_grn "BBR 已生效" || c_ylw "BBR 未生效（内核过老？），继续安装"
+# 极简系统可能没有 sysctl 命令（容器常见），全程做存在性判断
+if command -v sysctl >/dev/null 2>&1; then
+  # 容器/受限内核可能禁止写入运行时参数，失败不致命，配置文件已持久化
+  sysctl -p /etc/sysctl.d/99-bbr.conf >/dev/null 2>&1 || c_ylw "运行时生效被限制（容器环境常见），配置已写入持久化文件"
+  [ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" = "bbr" ] \
+    && c_grn "BBR 已生效" || c_ylw "BBR 运行时未生效（容器/受限内核常见），配置已持久化，真实 VPS 重启即生效"
+else
+  c_ylw "无 sysctl 命令（极简容器），BBR 配置已写入持久化文件，真实 VPS 上正常生效"
+fi
 
 # ----------------------------- 2. Xray --------------------------------------
-step "安装/更新 Xray-core（官方脚本）"
+step "安装/更新 Xray-core"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl openssl ca-certificates >/dev/null
-bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install \
-  | grep -E "installed:|Xray v" || true
+HAS_SYSTEMD=0
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  HAS_SYSTEMD=1
+fi
+if [ "${HAS_SYSTEMD}" = "1" ]; then
+  # 真实 VPS：官方安装脚本（含 systemd 服务、自动更新）
+  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install \
+    | grep -E "installed:|Xray v" || true
+else
+  # 无 systemd 回退：手动下载官方 zip 部署二进制（容器/WSL/极简系统）
+  c_ylw "未检测到 systemd，改用便携方式安装 Xray 二进制"
+  apt-get install -y -qq wget unzip >/dev/null
+  ARCH="$(dpkg --print-architecture)"
+  case "${ARCH}" in
+    amd64) XZIP="Xray-linux-64.zip" ;;
+    arm64) XZIP="Xray-linux-arm64-v8a.zip" ;;
+    *) die "不支持的架构: ${ARCH}" ;;
+  esac
+  TMPD="$(mktemp -d)"
+  wget -q "https://github.com/XTLS/Xray-core/releases/latest/download/${XZIP}" -O "${TMPD}/x.zip"
+  unzip -qo "${TMPD}/x.zip" -d "${TMPD}/x"
+  install -m 755 "${TMPD}/x/xray" /usr/local/bin/xray
+  mkdir -p /usr/local/etc/xray /usr/local/share/xray
+  [ -f "${TMPD}/x/geoip.dat" ] && install -m 644 "${TMPD}/x/geoip.dat" /usr/local/share/xray/
+  [ -f "${TMPD}/x/geosite.dat" ] && install -m 644 "${TMPD}/x/geosite.dat" /usr/local/share/xray/
+  rm -rf "${TMPD}"
+fi
 command -v xray >/dev/null 2>&1 || die "Xray 安装失败"
 # 不用管道取首行，避免 set -o pipefail 下 head 提前关闭触发 SIGPIPE(141)
 XRAY_VER="$(xray version 2>/dev/null | sed -n '1p')"
@@ -221,12 +254,25 @@ EOF
 
 # ----------------------------- 5. 启动验证 ----------------------------------
 step "启动 Xray 并设置开机自启"
-systemctl daemon-reload
-systemctl enable xray >/dev/null 2>&1 || true
-systemctl restart xray
-sleep 2
-systemctl is-active --quiet xray || die "Xray 未正常运行，查 journalctl -u xray"
-ss -tlnp | grep ":${PORT} " >/dev/null || die "端口 ${PORT} 未监听"
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  # 真实 VPS：systemd 托管
+  systemctl daemon-reload
+  systemctl enable xray >/dev/null 2>&1 || true
+  systemctl restart xray
+  sleep 2
+  systemctl is-active --quiet xray || die "Xray 未正常运行，查 journalctl -u xray"
+else
+  # 无 systemd 环境（容器/WSL 等）：直接进程方式拉起，便于验证配置可用
+  c_ylw "未检测到 systemd（容器/受限环境），改用直接进程方式启动 Xray"
+  apt-get install -y -qq procps iproute2 >/dev/null 2>&1 || true
+  pkill xray 2>/dev/null || true
+  nohup /usr/local/bin/xray run -config "${XRAY_CONF}" >/var/log/xray-direct.log 2>&1 &
+  sleep 2
+  # 不依赖 pgrep：用 ps + 端口监听双重确认，procps 缺失也能兜住
+  if ! ps -e 2>/dev/null | grep -q '[x]ray'; then die "Xray 启动失败，查 /var/log/xray-direct.log"; fi
+fi
+# 端口监听确认：优先 ss（iproute2），退回 netstat
+if ss -tln 2>/dev/null | grep -q ":${PORT} "; then :; elif netstat -tln 2>/dev/null | grep -q ":${PORT} "; then :; else die "端口 ${PORT} 未监听"; fi
 c_grn "Xray 运行中，TCP ${PORT} 已监听"
 
 # ----------------------------- 6. 客户端产物 --------------------------------
