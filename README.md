@@ -11,14 +11,15 @@ mihomo（Clash Meta）/ Shadowrocket / v2rayN 直接导入的 `vless://` 链接�
 ## 特性
 
 - 交互式问答（带默认值，回车即用）+ 命令行参数 + 配置文件，三种用法兼顾新手与自动化
+- **集中式依赖检测自动安装**：开头逐项体检 curl/openssl/wget/unzip/procps/iproute2 等，缺啥装啥，源异常给可操作报错
 - 自动开启并持久化 **BBR + fq**
-- 官方脚本安装 Xray，密钥/UUID/shortId 自动生成且**幂等**（重跑不重置）
+- 官方脚本安装 Xray（无 systemd 的容器/WSL 自动回退便携二进制），密钥/UUID/shortId 自动生成且**幂等**（重跑不重置）
 - 服务端设 `minClientVer=0.0.0`，客户端片段内置 `support-x25519mlkem768`，兼容新版 Xray 与 mihomo
 - 内置输入校验、失败回滚提示与独立卸载脚本
 
 ## 环境要求
 
-- 服务端：Debian 11/12 或 Ubuntu 22.04/24.04，root 权限
+- 服务端：Debian 11/12 或 Ubuntu 22.04/24.04，root 权限（脚本自动补齐运行依赖，无需手动预装）
 - 云安全组放行入站 **TCP 端口**（默认 543），来源 `0.0.0.0/0`
 - 客户端：支持 VLESS + Reality 的内核（mihomo ≥ 1.18、Shadowrocket、v2rayN 等）
 
