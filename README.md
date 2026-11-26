@@ -25,15 +25,41 @@ mihomo（Clash Meta）/ Shadowrocket / v2rayN 直接导入的 `vless://` 链接�
 
 ## 快速开始
 
+### 方式 A：一行命令（推荐，宝塔式，无需 clone）
+
+以 root 登录 VPS 后，复制一行即可完成安装（交互式，逐项回车确认）：
+
 ```bash
-# 上传后登录 VPS
-chmod +x install.sh
-./install.sh
+# 先确保有 curl（绝大多数系统自带；最小化镜像才需要这步）
+command -v curl >/dev/null || (apt update && apt install -y curl ca-certificates)
+
+# 一行拉取并运行（默认走交互式问答）
+curl -fsSL https://raw.githubusercontent.com/TheMrxk/vless-reality-onekey/master/install.sh | bash
 ```
 
-### 用法一：交互式（默认）
+非交互/自动化场景，用 `bash -s --` 把参数透传给脚本：
 
-直接运行，逐项确认端口、伪装域名、节点名，每项括号内都是默认值，回车采用：
+```bash
+curl -fsSL https://raw.githubusercontent.com/TheMrxk/vless-reality-onekey/master/install.sh \
+  | bash -s -- --port 543 --sni www.apple.com --name MyNode
+```
+
+> 国内 VPS 若拉不动 `raw.githubusercontent.com`，可改用 jsDelivr 镜像：
+> `https://cdn.jsdelivr.net/gh/TheMrxk/vless-reality-onekey@master/install.sh`
+>
+> 安全说明：`curl | bash` 前建议先审计脚本内容（浏览器打开上面链接即可通读），全部逻辑开源透明，无任何外联上报。
+
+### 方式 B：下载到本地再运行（便于审阅/离线/二次修改）
+
+```bash
+git clone https://github.com/TheMrxk/vless-reality-onekey.git
+cd vless-reality-onekey
+chmod +x install.sh
+./install.sh            # 交互式
+# 或：./install.sh --port 543 --sni www.apple.com --name MyNode
+```
+
+### 交互式长这样（默认值在括号里，回车采用）
 
 ```
 监听端口 [543]：
