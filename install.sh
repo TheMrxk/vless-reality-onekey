@@ -118,10 +118,49 @@ FLOW="xtls-rprx-vision"
 
 # ----------------------------- 前置检查 -------------------------------------
 [ "$(id -u)" -eq 0 ] || die "请用 root 运行：sudo ./install.sh"
-command -v apt >/dev/null 2>&1 || die "当前仅支持 Debian/Ubuntu（apt 系）"
+command -v apt-get >/dev/null 2>&1 || die "当前仅支持 Debian/Ubuntu（apt 系），请改用对应系统"
 step "系统信息"
 . /etc/os-release && echo "OS: ${PRETTY_NAME}  内核: $(uname -r)"
 mkdir -p "${WORKDIR}"
+
+# ----------------------------- 0. 依赖检测与自动安装 -------------------------
+# 集中声明：脚本运行所需的全部系统包；缺失才装，已装跳过，装失败明确报错
+REQUIRED_PKGS="curl openssl ca-certificates wget unzip procps iproute2"
+ensure_deps() {
+  step "检测运行环境依赖（缺失自动安装）"
+  export DEBIAN_FRONTEND=noninteractive
+  # 先刷新软件源，失败给出可操作提示而不是带着残缺环境继续
+  if ! apt-get update -qq; then
+    die "apt-get update 失败，请检查服务器网络或软件源（/etc/apt/sources.list）后重试"
+  fi
+  local missing=""
+  # 命令 -> 提供该命令的包 的映射，逐个用 command -v 实测，而非假设已装
+  local check; check="curl:curl openssl:openssl wget:wget unzip:unzip sysctl:procps ss:iproute2"
+  for pair in ${check}; do
+    local cmd="${pair%%:*}" pkg="${pair##*:}"
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+      missing="${missing} ${pkg}"
+      c_ylw "缺少命令 ${cmd}（将安装 ${pkg}）"
+    fi
+  done
+  # ca-certificates 无独立命令，用文件存在性判断
+  [ -s /etc/ssl/certs/ca-certificates.crt ] || missing="${missing} ca-certificates"
+  if [ -n "${missing// }" ]; then
+    echo "正在安装缺失依赖：${missing}"
+    # shellcheck disable=SC2086
+    if ! apt-get install -y -qq ${missing}; then
+      die "依赖安装失败：${missing}，请手动执行 apt-get install ${missing} 后重试"
+    fi
+    c_grn "依赖安装完成"
+  else
+    c_grn "全部依赖已就绪，无需安装"
+  fi
+  # 装完二次确认关键命令真正可用
+  for cmd in curl openssl; do
+    command -v "${cmd}" >/dev/null 2>&1 || die "${cmd} 安装后仍不可用，请检查软件源"
+  done
+}
+ensure_deps
 
 # ----------------------------- 1. BBR ---------------------------------------
 step "开启 BBR + fq（持久化）"
@@ -144,9 +183,7 @@ fi
 
 # ----------------------------- 2. Xray --------------------------------------
 step "安装/更新 Xray-core"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq curl openssl ca-certificates >/dev/null
+# 系统依赖已在开头 ensure_deps 统一安装，这里只负责 Xray 本体
 HAS_SYSTEMD=0
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   HAS_SYSTEMD=1
@@ -158,7 +195,6 @@ if [ "${HAS_SYSTEMD}" = "1" ]; then
 else
   # 无 systemd 回退：手动下载官方 zip 部署二进制（容器/WSL/极简系统）
   c_ylw "未检测到 systemd，改用便携方式安装 Xray 二进制"
-  apt-get install -y -qq wget unzip >/dev/null
   ARCH="$(dpkg --print-architecture)"
   case "${ARCH}" in
     amd64) XZIP="Xray-linux-64.zip" ;;
@@ -264,7 +300,6 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
 else
   # 无 systemd 环境（容器/WSL 等）：直接进程方式拉起，便于验证配置可用
   c_ylw "未检测到 systemd（容器/受限环境），改用直接进程方式启动 Xray"
-  apt-get install -y -qq procps iproute2 >/dev/null 2>&1 || true
   pkill xray 2>/dev/null || true
   nohup /usr/local/bin/xray run -config "${XRAY_CONF}" >/var/log/xray-direct.log 2>&1 &
   sleep 2
